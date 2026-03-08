@@ -5,7 +5,6 @@ Football | Trends | Geopolitics | AI News
 """
 
 import requests
-from bs4 import BeautifulSoup
 import time
 import os
 import re
@@ -21,20 +20,35 @@ def log(msg):    print(f"[{nepal_now().strftime('%H:%M:%S')}] {msg}", flush=True
 
 def send_telegram(message):
     try:
-        if len(message) > 4096:
-            message = message[:4090] + "..."
-        r = requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": message,
-                  "parse_mode": "HTML", "disable_web_page_preview": True},
-            timeout=10
-        )
-        log("Sent!" if r.status_code == 200 else f"TG error: {r.status_code} {r.text[:200]}")
+        # Split long messages safely on newlines
+        chunks = []
+        current = ""
+        for line in message.split("\n"):
+            if len(current) + len(line) + 1 > 4000:
+                chunks.append(current)
+                current = line + "\n"
+            else:
+                current += line + "\n"
+        if current:
+            chunks.append(current)
+
+        for chunk in chunks:
+            r = requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                json={"chat_id": CHAT_ID, "text": chunk,
+                      "disable_web_page_preview": True},
+                timeout=10
+            )
+            if r.status_code == 200:
+                log("Sent!")
+            else:
+                log(f"TG error: {r.status_code} {r.text[:200]}")
+            time.sleep(0.5)
     except Exception as e:
         log(f"TG error: {e}")
 
 def clean_text(val):
-    """Strip all markup and decode entities → plain text."""
+    """Strip all markup and decode entities to plain text."""
     val = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', val, flags=re.DOTALL)
     val = re.sub(r'<[^>]+>', ' ', val)
     val = re.sub(r'&amp;',  '&',  val)
@@ -46,14 +60,6 @@ def clean_text(val):
     val = re.sub(r'\s+', ' ', val)
     return val.strip()
 
-def esc(text):
-    """Escape plain text so it's safe inside Telegram HTML tags."""
-    return (text
-            .replace('&', '&amp;')
-            .replace('<', '&lt;')
-            .replace('>', '&gt;')
-            .replace('"', '&quot;'))
-
 def get_field(tag, content):
     m = re.search(rf'<{tag}[^>]*>\s*(.*?)\s*</{tag}>', content, re.DOTALL)
     if m:
@@ -64,7 +70,7 @@ def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         }
         resp = requests.get(url, headers=headers, timeout=12)
@@ -80,7 +86,6 @@ def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
                 continue
             desc = desc[:250]
 
-            # For Google Trends — extract related news headlines
             news_titles = []
             if is_trends:
                 news_titles = re.findall(r'<ht:news_item_title>(.*?)</ht:news_item_title>', block, re.DOTALL)
@@ -111,8 +116,7 @@ def fetch_football():
         "https://www.theguardian.com/football/championsleague/rss",
         "https://feeds.bbci.co.uk/sport/football/rss.xml",
     ]
-    items = []
-    seen = set()
+    items, seen = [], set()
     for url in sources:
         for item in fetch_rss(url, FOOTBALL_KW, max_items=8):
             key = item["title"][:50].lower()
@@ -128,8 +132,7 @@ def fetch_trends():
         "https://trends.google.com/trending/rss?geo=GB",
         "https://trends.google.com/trending/rss?geo=NP",
     ]
-    items = []
-    seen = set()
+    items, seen = [], set()
     for url in sources:
         for item in fetch_rss(url, [], max_items=10, is_trends=True):
             key = item["title"][:50].lower()
@@ -154,8 +157,7 @@ def fetch_geo():
         "https://feeds.bbci.co.uk/news/world/rss.xml",
         "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
     ]
-    items = []
-    seen = set()
+    items, seen = [], set()
     for url in sources:
         for item in fetch_rss(url, GEO_KW, max_items=6):
             key = item["title"][:50].lower()
@@ -177,8 +179,7 @@ def fetch_ai():
         "https://feeds.bbci.co.uk/news/technology/rss.xml",
         "https://techcrunch.com/feed/",
     ]
-    items = []
-    seen = set()
+    items, seen = [], set()
     for url in sources:
         for item in fetch_rss(url, AI_KW, max_items=6):
             key = item["title"][:50].lower()
@@ -187,119 +188,100 @@ def fetch_ai():
                 items.append(item)
     return items[:15]
 
-# ── Message builders ──────────────────────────────────────────────────────
+# ── Message builders (plain text, no HTML) ───────────────────────────────
 
 def build_football(items):
     lines = [
-        "⚽ <b>FOOTBALL — SCORES &amp; NEWS</b>",
-        f"🕐 <i>{now_str()}</i>",
+        "⚽ FOOTBALL — SCORES & NEWS",
+        f"🕐 {now_str()}",
         "━━━━━━━━━━━━━━━━━━━━━━", ""
     ]
     if not items:
         lines.append("⚠️ No football news available right now.")
     else:
         for item in items:
-            lines.append(f"🔸 <b>{esc(item['title'])}</b>")
+            lines.append(f"🔸 {item['title']}")
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"    <i>{esc(item['desc'][:200])}</i>")
+                lines.append(f"   {item['desc'][:200]}")
             if item['link']:
-                lines.append(f"    🔗 <a href='{esc(item['link'])}'>Full story</a>")
+                lines.append(f"   🔗 {item['link']}")
             lines.append("")
-    lines.append("📡 <i>Premier League | Champions League | La Liga</i>")
+    lines.append("📡 Premier League | Champions League | La Liga")
     return "\n".join(lines)
 
 def build_trends(items):
     lines = [
-        "🔥 <b>LATEST TRENDS</b>",
-        f"🕐 <i>{now_str()}</i>",
+        "🔥 LATEST TRENDS",
+        f"🕐 {now_str()}",
         "━━━━━━━━━━━━━━━━━━━━━━", ""
     ]
     if not items:
         lines.append("⚠️ No trending topics right now.")
     else:
         for i, item in enumerate(items, 1):
-            lines.append(f"{i}. 🔺 <b>{esc(item['title'])}</b>")
+            lines.append(f"{i}. 🔺 {item['title']}")
             if item.get("news"):
                 for n in item["news"]:
-                    lines.append(f"    📰 <i>{esc(n)}</i>")
+                    lines.append(f"   📰 {n}")
             lines.append("")
-    lines.append("📡 <i>Google Trends: US | UK | Nepal</i>")
+    lines.append("📡 Google Trends: US | UK | Nepal")
     return "\n".join(lines)
 
 def build_geo(items):
     lines = [
-        "🌍 <b>GEOPOLITICS</b>",
-        f"🕐 <i>{now_str()}</i>",
+        "🌍 GEOPOLITICS",
+        f"🕐 {now_str()}",
         "━━━━━━━━━━━━━━━━━━━━━━", ""
     ]
     if not items:
         lines.append("⚠️ No geopolitical news right now.")
     else:
         for item in items:
-            lines.append(f"🔹 <b>{esc(item['title'])}</b>")
+            lines.append(f"🔹 {item['title']}")
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"    <i>{esc(item['desc'][:200])}</i>")
+                lines.append(f"   {item['desc'][:200]}")
             if item['link']:
-                lines.append(f"    🔗 <a href='{esc(item['link'])}'>Read more</a>")
+                lines.append(f"   🔗 {item['link']}")
             lines.append("")
-    lines.append("📡 <i>Sources: The Guardian | BBC World</i>")
+    lines.append("📡 Sources: The Guardian | BBC World")
     return "\n".join(lines)
 
 def build_ai(items):
     lines = [
-        "🤖 <b>AI NEWS</b>",
-        f"🕐 <i>{now_str()}</i>",
+        "🤖 AI NEWS",
+        f"🕐 {now_str()}",
         "━━━━━━━━━━━━━━━━━━━━━━", ""
     ]
     if not items:
         lines.append("⚠️ No AI news right now.")
     else:
         for item in items:
-            lines.append(f"⚡ <b>{esc(item['title'])}</b>")
+            lines.append(f"⚡ {item['title']}")
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"    <i>{esc(item['desc'][:200])}</i>")
+                lines.append(f"   {item['desc'][:200]}")
             if item['link']:
-                lines.append(f"    🔗 <a href='{esc(item['link'])}'>Read more</a>")
+                lines.append(f"   🔗 {item['link']}")
             lines.append("")
-    lines.append("📡 <i>Sources: The Guardian | BBC Tech | TechCrunch</i>")
+    lines.append("📡 Sources: The Guardian | BBC Tech | TechCrunch")
     return "\n".join(lines)
 
 # ── Scheduler ─────────────────────────────────────────────────────────────
 
 def send_briefing():
     log("=== Sending briefing ===")
-
-    try:
-        items = fetch_football()
-        log(f"Football: {len(items)} stories")
-        send_telegram(build_football(items))
-    except Exception as e:
-        log(f"Football error: {e}")
-    time.sleep(2)
-
-    try:
-        items = fetch_trends()
-        log(f"Trends: {len(items)} topics")
-        send_telegram(build_trends(items))
-    except Exception as e:
-        log(f"Trends error: {e}")
-    time.sleep(2)
-
-    try:
-        items = fetch_geo()
-        log(f"Geo: {len(items)} stories")
-        send_telegram(build_geo(items))
-    except Exception as e:
-        log(f"Geo error: {e}")
-    time.sleep(2)
-
-    try:
-        items = fetch_ai()
-        log(f"AI: {len(items)} stories")
-        send_telegram(build_ai(items))
-    except Exception as e:
-        log(f"AI error: {e}")
-
+    for label, fetch_fn, build_fn in [
+        ("Football",  fetch_football, build_football),
+        ("Trends",    fetch_trends,   build_trends),
+        ("Geo",       fetch_geo,      build_geo),
+        ("AI",        fetch_ai,       build_ai),
+    ]:
+        try:
+            items = fetch_fn()
+            log(f"{label}: {len(items)} items")
+            send_telegram(build_fn(items))
+        except Exception as e:
+            log(f"{label} error: {e}")
+        time.sleep(2)
     log("=== Briefing complete ===")
 
 def should_send(last_sent):
