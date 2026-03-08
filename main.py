@@ -102,13 +102,25 @@ def fetch_trends():
         ("https://trends.google.com/trending/rss?geo=GB", []),
     ]
     items = []
-    seen  = set()
+    seen_titles = set()
+    seen_words  = set()  # catch near-duplicates like "weather today" vs "today weather"
     for url, kw in sources:
-        for item in fetch_rss(url, kw, max_items=10):
-            key = item["title"][:50].lower()
-            if key not in seen:
-                seen.add(key)
-                items.append(item)
+        for item in fetch_rss(url, kw, max_items=15):
+            title = item["title"].strip()
+            # Skip junk: single char, very short, or pure numbers
+            if len(title) < 4 or title.isdigit():
+                continue
+            key   = title.lower()
+            words = frozenset(key.split())
+            # Skip exact duplicates
+            if key in seen_titles:
+                continue
+            # Skip near-duplicates (same words different order)
+            if words in seen_words:
+                continue
+            seen_titles.add(key)
+            seen_words.add(words)
+            items.append(item)
     return items[:15]
 
 GEO_KW = ["war", "conflict", "diplomacy", "sanctions", "military", "treaty",
