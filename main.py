@@ -20,35 +20,20 @@ def log(msg):    print(f"[{nepal_now().strftime('%H:%M:%S')}] {msg}", flush=True
 
 def send_telegram(message):
     try:
-        # Split long messages safely on newlines
-        chunks = []
-        current = ""
-        for line in message.split("\n"):
-            if len(current) + len(line) + 1 > 4000:
-                chunks.append(current)
-                current = line + "\n"
-            else:
-                current += line + "\n"
-        if current:
-            chunks.append(current)
-
-        for chunk in chunks:
-            r = requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                json={"chat_id": CHAT_ID, "text": chunk,
-                      "disable_web_page_preview": True},
-                timeout=10
-            )
-            if r.status_code == 200:
-                log("Sent!")
-            else:
-                log(f"TG error: {r.status_code} {r.text[:200]}")
-            time.sleep(0.5)
+        # Ensure single message under 4096 chars
+        if len(message) > 4096:
+            message = message[:4093] + "..."
+        r = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": message,
+                  "disable_web_page_preview": True},
+            timeout=10
+        )
+        log("Sent!" if r.status_code == 200 else f"TG error: {r.status_code} {r.text[:200]}")
     except Exception as e:
         log(f"TG error: {e}")
 
 def clean_text(val):
-    """Strip all markup and decode entities to plain text."""
     val = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', val, flags=re.DOTALL)
     val = re.sub(r'<[^>]+>', ' ', val)
     val = re.sub(r'&amp;',  '&',  val)
@@ -66,12 +51,19 @@ def get_field(tag, content):
         return clean_text(m.group(1))
     return ""
 
+def shorten_title(title, max_len=80):
+    """Trim title to a clean headline length."""
+    if len(title) <= max_len:
+        return title
+    cut = title[:max_len]
+    last_space = cut.rfind(' ')
+    return cut[:last_space] + '…' if last_space > 40 else cut + '…'
+
 def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
             "Accept": "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
         }
         resp = requests.get(url, headers=headers, timeout=12)
         resp.raise_for_status()
@@ -80,21 +72,19 @@ def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
         items = []
         for block in re.findall(r'<item[^>]*>(.*?)</item>', text, re.DOTALL):
             title = get_field("title", block)
-            link  = get_field("link", block)
             desc  = get_field("description", block)
             if not title:
                 continue
-            desc = desc[:250]
 
             news_titles = []
             if is_trends:
                 news_titles = re.findall(r'<ht:news_item_title>(.*?)</ht:news_item_title>', block, re.DOTALL)
-                news_titles = [clean_text(t) for t in news_titles[:3]]
+                news_titles = [clean_text(t) for t in news_titles[:2]]
 
             combined = (title + " " + desc).lower()
             if keywords and not any(k.lower() in combined for k in keywords):
                 continue
-            items.append({"title": title, "link": link, "desc": desc, "news": news_titles})
+            items.append({"title": title, "desc": desc, "news": news_titles})
             if len(items) >= max_items:
                 break
         log(f"  RSS OK: {url[:50]} → {len(items)} items")
@@ -107,7 +97,8 @@ def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
 FOOTBALL_KW = ["premier league", "champions league", "la liga", "barcelona",
                "real madrid", "liverpool", "arsenal", "manchester", "chelsea",
                "tottenham", "goal", "score", "match", "win", "defeat", "draw",
-               "epl", "ucl", "transfer", "injury", "result", "fixture"]
+               "epl", "ucl", "transfer", "injury", "result", "fixture", "vs",
+               "beat", "held", "cup", "fa cup"]
 
 def fetch_football():
     sources = [
@@ -118,12 +109,12 @@ def fetch_football():
     ]
     items, seen = [], set()
     for url in sources:
-        for item in fetch_rss(url, FOOTBALL_KW, max_items=8):
-            key = item["title"][:50].lower()
+        for item in fetch_rss(url, FOOTBALL_KW, max_items=10):
+            key = item["title"][:60].lower()
             if key not in seen:
                 seen.add(key)
                 items.append(item)
-    return items[:15]
+    return items[:10]
 
 # ── TRENDS ───────────────────────────────────────────────────────────────
 def fetch_trends():
@@ -135,11 +126,11 @@ def fetch_trends():
     items, seen = [], set()
     for url in sources:
         for item in fetch_rss(url, [], max_items=10, is_trends=True):
-            key = item["title"][:50].lower()
+            key = item["title"][:60].lower()
             if key not in seen:
                 seen.add(key)
                 items.append(item)
-    return items[:15]
+    return items[:10]
 
 # ── GEOPOLITICS ──────────────────────────────────────────────────────────
 GEO_KW = ["war", "conflict", "diplomacy", "sanction", "military", "treaty",
@@ -159,12 +150,12 @@ def fetch_geo():
     ]
     items, seen = [], set()
     for url in sources:
-        for item in fetch_rss(url, GEO_KW, max_items=6):
-            key = item["title"][:50].lower()
+        for item in fetch_rss(url, GEO_KW, max_items=8):
+            key = item["title"][:60].lower()
             if key not in seen:
                 seen.add(key)
                 items.append(item)
-    return items[:15]
+    return items[:10]
 
 # ── AI NEWS ──────────────────────────────────────────────────────────────
 AI_KW = ["ai", "artificial intelligence", "llm", "gpt", "openai", "anthropic",
@@ -181,88 +172,51 @@ def fetch_ai():
     ]
     items, seen = [], set()
     for url in sources:
-        for item in fetch_rss(url, AI_KW, max_items=6):
-            key = item["title"][:50].lower()
+        for item in fetch_rss(url, AI_KW, max_items=8):
+            key = item["title"][:60].lower()
             if key not in seen:
                 seen.add(key)
                 items.append(item)
-    return items[:15]
+    return items[:10]
 
-# ── Message builders (plain text, no HTML) ───────────────────────────────
+# ── Message builders ──────────────────────────────────────────────────────
 
 def build_football(items):
-    lines = [
-        "⚽ FOOTBALL — SCORES & NEWS",
-        f"🕐 {now_str()}",
-        "━━━━━━━━━━━━━━━━━━━━━━", ""
-    ]
+    lines = [f"⚽ FOOTBALL  •  {now_str()}", ""]
     if not items:
-        lines.append("⚠️ No football news available right now.")
+        lines.append("No football news right now.")
     else:
         for item in items:
-            lines.append(f"🔸 {item['title']}")
-            if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"   {item['desc'][:200]}")
-            if item['link']:
-                lines.append(f"   🔗 {item['link']}")
-            lines.append("")
-    lines.append("📡 Premier League | Champions League | La Liga")
+            lines.append(f"• {shorten_title(item['title'])}")
     return "\n".join(lines)
 
 def build_trends(items):
-    lines = [
-        "🔥 LATEST TRENDS",
-        f"🕐 {now_str()}",
-        "━━━━━━━━━━━━━━━━━━━━━━", ""
-    ]
+    lines = [f"🔥 TRENDING  •  {now_str()}", ""]
     if not items:
-        lines.append("⚠️ No trending topics right now.")
+        lines.append("No trending topics right now.")
     else:
         for i, item in enumerate(items, 1):
-            lines.append(f"{i}. 🔺 {item['title']}")
-            if item.get("news"):
-                for n in item["news"]:
-                    lines.append(f"   📰 {n}")
-            lines.append("")
-    lines.append("📡 Google Trends: US | UK | Nepal")
+            lines.append(f"{i}. {shorten_title(item['title'])}")
+            for n in item.get("news", []):
+                lines.append(f"   → {shorten_title(n, 70)}")
     return "\n".join(lines)
 
 def build_geo(items):
-    lines = [
-        "🌍 GEOPOLITICS",
-        f"🕐 {now_str()}",
-        "━━━━━━━━━━━━━━━━━━━━━━", ""
-    ]
+    lines = [f"🌍 GEOPOLITICS  •  {now_str()}", ""]
     if not items:
-        lines.append("⚠️ No geopolitical news right now.")
+        lines.append("No geopolitical news right now.")
     else:
         for item in items:
-            lines.append(f"🔹 {item['title']}")
-            if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"   {item['desc'][:200]}")
-            if item['link']:
-                lines.append(f"   🔗 {item['link']}")
-            lines.append("")
-    lines.append("📡 Sources: The Guardian | BBC World")
+            lines.append(f"• {shorten_title(item['title'])}")
     return "\n".join(lines)
 
 def build_ai(items):
-    lines = [
-        "🤖 AI NEWS",
-        f"🕐 {now_str()}",
-        "━━━━━━━━━━━━━━━━━━━━━━", ""
-    ]
+    lines = [f"🤖 AI & TECH  •  {now_str()}", ""]
     if not items:
-        lines.append("⚠️ No AI news right now.")
+        lines.append("No AI/Tech news right now.")
     else:
         for item in items:
-            lines.append(f"⚡ {item['title']}")
-            if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"   {item['desc'][:200]}")
-            if item['link']:
-                lines.append(f"   🔗 {item['link']}")
-            lines.append("")
-    lines.append("📡 Sources: The Guardian | BBC Tech | TechCrunch")
+            lines.append(f"• {shorten_title(item['title'])}")
     return "\n".join(lines)
 
 # ── Scheduler ─────────────────────────────────────────────────────────────
@@ -270,10 +224,10 @@ def build_ai(items):
 def send_briefing():
     log("=== Sending briefing ===")
     for label, fetch_fn, build_fn in [
-        ("Football",  fetch_football, build_football),
-        ("Trends",    fetch_trends,   build_trends),
-        ("Geo",       fetch_geo,      build_geo),
-        ("AI",        fetch_ai,       build_ai),
+        ("Football", fetch_football, build_football),
+        ("Trends",   fetch_trends,   build_trends),
+        ("Geo",      fetch_geo,      build_geo),
+        ("AI",       fetch_ai,       build_ai),
     ]:
         try:
             items = fetch_fn()
