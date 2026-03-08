@@ -34,15 +34,25 @@ def send_telegram(message):
         log(f"TG error: {e}")
 
 def clean_text(val):
+    """Strip all markup and decode entities → plain text."""
     val = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', val, flags=re.DOTALL)
     val = re.sub(r'<[^>]+>', ' ', val)
-    val = re.sub(r'&amp;', '&', val)
-    val = re.sub(r'&lt;', '<', val)
-    val = re.sub(r'&gt;', '>', val)
-    val = re.sub(r'&quot;', '"', val)
+    val = re.sub(r'&amp;',  '&',  val)
+    val = re.sub(r'&lt;',   '<',  val)
+    val = re.sub(r'&gt;',   '>',  val)
+    val = re.sub(r'&quot;', '"',  val)
+    val = re.sub(r'&apos;', "'",  val)
     val = re.sub(r'&#?[a-zA-Z0-9]+;', ' ', val)
     val = re.sub(r'\s+', ' ', val)
     return val.strip()
+
+def esc(text):
+    """Escape plain text so it's safe inside Telegram HTML tags."""
+    return (text
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;'))
 
 def get_field(tag, content):
     m = re.search(rf'<{tag}[^>]*>\s*(.*?)\s*</{tag}>', content, re.DOTALL)
@@ -68,8 +78,7 @@ def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
             desc  = get_field("description", block)
             if not title:
                 continue
-            desc = re.sub(r'<[^>]+>', ' ', desc)   # strip any leftover HTML tags
-            desc = re.sub(r'\s+', ' ', desc).strip()[:250]
+            desc = desc[:250]
 
             # For Google Trends — extract related news headlines
             news_titles = []
@@ -100,7 +109,6 @@ def fetch_football():
         "https://www.theguardian.com/football/rss",
         "https://www.theguardian.com/football/premierleague/rss",
         "https://www.theguardian.com/football/championsleague/rss",
-        "https://www.theguardian.com/football/la-liga/rss",
         "https://feeds.bbci.co.uk/sport/football/rss.xml",
     ]
     items = []
@@ -191,11 +199,11 @@ def build_football(items):
         lines.append("⚠️ No football news available right now.")
     else:
         for item in items:
-            lines.append(f"🔸 <b>{item['title']}</b>")
+            lines.append(f"🔸 <b>{esc(item['title'])}</b>")
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"    <i>{item['desc'][:200]}</i>")
+                lines.append(f"    <i>{esc(item['desc'][:200])}</i>")
             if item['link']:
-                lines.append(f"    🔗 <a href='{item['link']}'>Full story</a>")
+                lines.append(f"    🔗 <a href='{esc(item['link'])}'>Full story</a>")
             lines.append("")
     lines.append("📡 <i>Premier League | Champions League | La Liga</i>")
     return "\n".join(lines)
@@ -210,11 +218,10 @@ def build_trends(items):
         lines.append("⚠️ No trending topics right now.")
     else:
         for i, item in enumerate(items, 1):
-            lines.append(f"{i}. 🔺 <b>{item['title']}</b>")
-            # Show related news headlines for context
+            lines.append(f"{i}. 🔺 <b>{esc(item['title'])}</b>")
             if item.get("news"):
                 for n in item["news"]:
-                    lines.append(f"    📰 <i>{n}</i>")
+                    lines.append(f"    📰 <i>{esc(n)}</i>")
             lines.append("")
     lines.append("📡 <i>Google Trends: US | UK | Nepal</i>")
     return "\n".join(lines)
@@ -229,11 +236,11 @@ def build_geo(items):
         lines.append("⚠️ No geopolitical news right now.")
     else:
         for item in items:
-            lines.append(f"🔹 <b>{item['title']}</b>")
+            lines.append(f"🔹 <b>{esc(item['title'])}</b>")
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"    <i>{item['desc'][:200]}</i>")
+                lines.append(f"    <i>{esc(item['desc'][:200])}</i>")
             if item['link']:
-                lines.append(f"    🔗 <a href='{item['link']}'>Read more</a>")
+                lines.append(f"    🔗 <a href='{esc(item['link'])}'>Read more</a>")
             lines.append("")
     lines.append("📡 <i>Sources: The Guardian | BBC World</i>")
     return "\n".join(lines)
@@ -248,11 +255,11 @@ def build_ai(items):
         lines.append("⚠️ No AI news right now.")
     else:
         for item in items:
-            lines.append(f"⚡ <b>{item['title']}</b>")
+            lines.append(f"⚡ <b>{esc(item['title'])}</b>")
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                lines.append(f"    <i>{item['desc'][:200]}</i>")
+                lines.append(f"    <i>{esc(item['desc'][:200])}</i>")
             if item['link']:
-                lines.append(f"    🔗 <a href='{item['link']}'>Read more</a>")
+                lines.append(f"    🔗 <a href='{esc(item['link'])}'>Read more</a>")
             lines.append("")
     lines.append("📡 <i>Sources: The Guardian | BBC Tech | TechCrunch</i>")
     return "\n".join(lines)
