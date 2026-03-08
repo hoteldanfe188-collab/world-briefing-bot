@@ -79,7 +79,8 @@ def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
             combined = (title + " " + desc).lower()
             if keywords and not any(k.lower() in combined for k in keywords):
                 continue
-            items.append({"title": title, "link": link, "desc": desc, "news": news_titles})            if len(items) >= max_items:
+            items.append({"title": title, "link": link, "desc": desc, "news": news_titles})
+            if len(items) >= max_items:
                 break
         log(f"  RSS OK: {url[:50]} → {len(items)} items")
         return items
