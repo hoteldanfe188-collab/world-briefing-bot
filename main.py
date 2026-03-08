@@ -50,7 +50,7 @@ def get_field(tag, content):
         return clean_text(m.group(1))
     return ""
 
-def fetch_rss(url, keywords=[], max_items=15):
+def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
@@ -69,11 +69,17 @@ def fetch_rss(url, keywords=[], max_items=15):
             if not title:
                 continue
             desc = re.sub(r'\s+', ' ', desc).strip()[:250]
+
+            # For Google Trends — extract related news headlines
+            news_titles = []
+            if is_trends:
+                news_titles = re.findall(r'<ht:news_item_title>(.*?)</ht:news_item_title>', block, re.DOTALL)
+                news_titles = [clean_text(t) for t in news_titles[:3]]
+
             combined = (title + " " + desc).lower()
             if keywords and not any(k.lower() in combined for k in keywords):
                 continue
-            items.append({"title": title, "link": link, "desc": desc})
-            if len(items) >= max_items:
+            items.append({"title": title, "link": link, "desc": desc, "news": news_titles})            if len(items) >= max_items:
                 break
         log(f"  RSS OK: {url[:50]} → {len(items)} items")
         return items
@@ -115,7 +121,7 @@ def fetch_trends():
     items = []
     seen = set()
     for url in sources:
-        for item in fetch_rss(url, [], max_items=10):
+        for item in fetch_rss(url, [], max_items=10, is_trends=True):
             key = item["title"][:50].lower()
             if key not in seen:
                 seen.add(key)
@@ -203,8 +209,10 @@ def build_trends(items):
     else:
         for i, item in enumerate(items, 1):
             lines.append(f"{i}. 🔺 <b>{item['title']}</b>")
-            if item['link']:
-                lines.append(f"    🔗 <a href='{item['link']}'>Explore →</a>")
+            # Show related news headlines for context
+            if item.get("news"):
+                for n in item["news"]:
+                    lines.append(f"    📰 <i>{n}</i>")
             lines.append("")
     lines.append("📡 <i>Google Trends: US | UK | Nepal</i>")
     return "\n".join(lines)
