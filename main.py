@@ -68,6 +68,7 @@ def fetch_rss(url, keywords=[], max_items=15, is_trends=False):
             desc  = get_field("description", block)
             if not title:
                 continue
+            desc = re.sub(r'<[^>]+>', ' ', desc)   # strip any leftover HTML tags
             desc = re.sub(r'\s+', ' ', desc).strip()[:250]
 
             # For Google Trends — extract related news headlines
@@ -99,7 +100,7 @@ def fetch_football():
         "https://www.theguardian.com/football/rss",
         "https://www.theguardian.com/football/premierleague/rss",
         "https://www.theguardian.com/football/championsleague/rss",
-        "https://www.theguardian.com/football/laliga/rss",
+        "https://www.theguardian.com/football/la-liga/rss",
         "https://feeds.bbci.co.uk/sport/football/rss.xml",
     ]
     items = []
