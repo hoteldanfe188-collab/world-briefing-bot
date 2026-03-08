@@ -33,12 +33,21 @@ def send_telegram(message):
     except Exception as e:
         log(f"TG error: {e}")
 
+def clean_text(val):
+    val = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', val, flags=re.DOTALL)
+    val = re.sub(r'<[^>]+>', ' ', val)
+    val = re.sub(r'&amp;', '&', val)
+    val = re.sub(r'&lt;', '<', val)
+    val = re.sub(r'&gt;', '>', val)
+    val = re.sub(r'&quot;', '"', val)
+    val = re.sub(r'&#?[a-zA-Z0-9]+;', ' ', val)
+    val = re.sub(r'\s+', ' ', val)
+    return val.strip()
+
 def get_field(tag, content):
     m = re.search(rf'<{tag}[^>]*>\s*(.*?)\s*</{tag}>', content, re.DOTALL)
     if m:
-        val = m.group(1).strip()
-        val = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', val, flags=re.DOTALL)
-        return BeautifulSoup(val, "html.parser").get_text(strip=True)
+        return clean_text(m.group(1))
     return ""
 
 def fetch_rss(url, keywords=[], max_items=15):
