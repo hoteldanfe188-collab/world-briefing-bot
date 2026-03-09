@@ -19,8 +19,6 @@ def nepal_now(): return datetime.now(NEPAL_TZ)
 def now_str():   return nepal_now().strftime("%d %b %Y, %I:%M %p NST")
 def log(msg):    print(f"[{nepal_now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-# ── Telegram sender ───────────────────────────────────────────────────────
-
 def send_message(text):
     try:
         if len(text) > 4096:
@@ -39,19 +37,21 @@ def send_message(text):
     except Exception as e:
         log(f"TG error: {e}")
 
-# ── RSS helpers ───────────────────────────────────────────────────────────
-
-def clean_text(val):
+def clean(val):
+    """Strip ALL HTML, decode entities, escape leftover < > for Telegram"""
     val = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', val, flags=re.DOTALL)
     val = re.sub(r'<[^>]+>', ' ', val)
     val = val.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-    val = val.replace('&quot;', '"').replace('&apos;', "'")
+    val = val.replace('&quot;', '"').replace('&apos;', "'").replace('&nbsp;', ' ')
     val = re.sub(r'&#?[a-zA-Z0-9]+;', ' ', val)
-    return re.sub(r'\s+', ' ', val).strip()
+    val = re.sub(r'\s+', ' ', val).strip()
+    # Re-escape so Telegram HTML parser won't choke on stray < >
+    val = val.replace('<', '&lt;').replace('>', '&gt;')
+    return val
 
 def get_field(tag, block):
     m = re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', block, re.DOTALL)
-    return clean_text(m.group(1)) if m else ""
+    return clean(m.group(1)) if m else ""
 
 def fetch_rss(url, keywords=None, max_items=15, is_trends=False):
     try:
@@ -73,11 +73,10 @@ def fetch_rss(url, keywords=None, max_items=15, is_trends=False):
             if not title:
                 continue
 
-            # Google Trends: pull related news headlines for context
             news_titles = []
             if is_trends:
                 raw = re.findall(r'<ht:news_item_title>(.*?)</ht:news_item_title>', block, re.DOTALL)
-                news_titles = [clean_text(t) for t in raw[:3]]
+                news_titles = [clean(t) for t in raw[:3]]
 
             if keywords:
                 combined = (title + " " + desc).lower()
@@ -88,20 +87,17 @@ def fetch_rss(url, keywords=None, max_items=15, is_trends=False):
             if len(items) >= max_items:
                 break
 
-        log(f"  RSS OK {url[:55]} → {len(items)} items")
+        log(f"  RSS OK {url[:55]} -> {len(items)} items")
         return items
     except Exception as e:
-        log(f"  RSS FAIL {url[:55]} → {e}")
+        log(f"  RSS FAIL {url[:55]} -> {e}")
         return []
 
-# ── Data fetchers ─────────────────────────────────────────────────────────
+# ── Fetchers ──────────────────────────────────────────────────────────────
 
-FOOTBALL_KW = [
-    "premier league", "champions league", "la liga", "barcelona", "real madrid",
-    "liverpool", "arsenal", "manchester", "chelsea", "tottenham", "goal",
-    "score", "match", "win", "defeat", "draw", "epl", "ucl", "transfer",
-    "injury", "result", "fixture", "atletico", "inter", "milan", "psg"
-]
+FOOTBALL_KW = ["premier league","champions league","la liga","barcelona","real madrid",
+               "liverpool","arsenal","manchester","chelsea","tottenham","goal","score",
+               "match","win","defeat","draw","epl","ucl","transfer","injury","result","fixture"]
 
 def fetch_football():
     sources = [
@@ -115,8 +111,7 @@ def fetch_football():
         for item in fetch_rss(url, FOOTBALL_KW, max_items=8):
             key = item["title"][:50].lower()
             if key not in seen:
-                seen.add(key)
-                items.append(item)
+                seen.add(key); items.append(item)
     return items[:15]
 
 def fetch_trends():
@@ -130,18 +125,14 @@ def fetch_trends():
         for item in fetch_rss(url, max_items=10, is_trends=True):
             key = item["title"][:50].lower()
             if key not in seen:
-                seen.add(key)
-                items.append(item)
+                seen.add(key); items.append(item)
     return items[:15]
 
-GEO_KW = [
-    "war", "conflict", "diplomacy", "sanction", "military", "treaty",
-    "president", "prime minister", "nato", "united nations", "crisis",
-    "ceasefire", "attack", "invasion", "nuclear", "protest", "summit",
-    "tension", "troops", "alliance", "government", "minister", "peace",
-    "election", "policy", "trade", "tariff", "china", "russia", "ukraine",
-    "israel", "india", "pakistan", "nepal", "us ", "eu ", "iran", "north korea"
-]
+GEO_KW = ["war","conflict","diplomacy","sanction","military","treaty","president",
+          "prime minister","nato","united nations","crisis","ceasefire","attack",
+          "invasion","nuclear","protest","summit","tension","troops","alliance",
+          "government","minister","peace","election","policy","trade","tariff",
+          "china","russia","ukraine","israel","india","pakistan","nepal","iran"]
 
 def fetch_geo():
     sources = [
@@ -156,16 +147,12 @@ def fetch_geo():
         for item in fetch_rss(url, GEO_KW, max_items=6):
             key = item["title"][:50].lower()
             if key not in seen:
-                seen.add(key)
-                items.append(item)
+                seen.add(key); items.append(item)
     return items[:15]
 
-AI_KW = [
-    "ai", "artificial intelligence", "llm", "gpt", "openai", "anthropic",
-    "gemini", "claude", "machine learning", "deep learning", "neural",
-    "chatbot", "language model", "nvidia", "automation", "robot", "agi",
-    "generative", "deepmind", "meta ai", "copilot", "chip", "model"
-]
+AI_KW = ["ai","artificial intelligence","llm","gpt","openai","anthropic","gemini",
+         "claude","machine learning","deep learning","neural","chatbot","language model",
+         "nvidia","automation","robot","agi","generative","deepmind","meta ai","copilot"]
 
 def fetch_ai():
     sources = [
@@ -179,128 +166,108 @@ def fetch_ai():
         for item in fetch_rss(url, AI_KW, max_items=6):
             key = item["title"][:50].lower()
             if key not in seen:
-                seen.add(key)
-                items.append(item)
+                seen.add(key); items.append(item)
     return items[:15]
 
-# ── Message senders (one per section) ────────────────────────────────────
+# ── Senders ───────────────────────────────────────────────────────────────
 
 def send_football(matches):
-    msg = "⚽ <b>FOOTBALL — SCORES &amp; NEWS</b>\n"
+    msg  = "⚽ <b>FOOTBALL — SCORES &amp; NEWS</b>\n"
     msg += f"🕐 <i>{now_str()}</i>\n"
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     if not matches:
-        msg += "⚠️ No football news available right now."
+        msg += "No football news right now.\n"
     else:
         for m in matches:
             msg += f"🔸 <b>{m['title']}</b>\n"
             if m['desc'] and m['desc'].lower() != m['title'].lower():
-                msg += f"    <i>{m['desc'][:200]}</i>\n"
+                msg += f"<i>{m['desc'][:200]}</i>\n"
             if m['link']:
-                msg += f"    🔗 <a href='{m['link']}'>Full story</a>\n"
+                msg += f"🔗 <a href='{m['link']}'>Full story</a>\n"
             msg += "\n"
     msg += "📡 <i>Premier League | Champions League | La Liga</i>"
     send_message(msg)
 
 def send_trending(trends):
-    msg = "🔥 <b>LATEST TRENDS</b>\n"
+    msg  = "🔥 <b>LATEST TRENDS</b>\n"
     msg += f"🕐 <i>{now_str()}</i>\n"
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     if not trends:
-        msg += "⚠️ No trending topics right now."
+        msg += "No trending topics right now.\n"
     else:
         for i, t in enumerate(trends, 1):
             msg += f"{i}. 🔺 <b>{t['title']}</b>\n"
             for n in t.get("news", []):
-                msg += f"    📰 <i>{n}</i>\n"
+                msg += f"  📰 <i>{n}</i>\n"
             msg += "\n"
     msg += "📡 <i>Google Trends: US | UK | Nepal</i>"
     send_message(msg)
 
 def send_geopolitics(news):
-    msg = "🌍 <b>GEO-POLITICS UPDATE</b>\n"
+    msg  = "🌍 <b>GEO-POLITICS UPDATE</b>\n"
     msg += f"🕐 <i>{now_str()}</i>\n"
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     if not news:
-        msg += "⚠️ No geopolitical news right now."
+        msg += "No geopolitical news right now.\n"
     else:
         for item in news:
             msg += f"🔹 <b>{item['title']}</b>\n"
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                msg += f"    <i>{item['desc'][:200]}</i>\n"
+                msg += f"<i>{item['desc'][:200]}</i>\n"
             if item['link']:
-                msg += f"    🔗 <a href='{item['link']}'>Read more</a>\n"
+                msg += f"🔗 <a href='{item['link']}'>Read more</a>\n"
             msg += "\n"
-    msg += "📡 <i>Sources: The Guardian | BBC World</i>"
+    msg += "📡 <i>The Guardian | BBC World</i>"
     send_message(msg)
 
 def send_ai_news(news):
-    msg = "🤖 <b>AI NEWS</b>\n"
+    msg  = "🤖 <b>AI NEWS</b>\n"
     msg += f"🕐 <i>{now_str()}</i>\n"
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     if not news:
-        msg += "⚠️ No AI news right now."
+        msg += "No AI news right now.\n"
     else:
         for item in news:
             msg += f"⚡ <b>{item['title']}</b>\n"
             if item['desc'] and item['desc'].lower() != item['title'].lower():
-                msg += f"    <i>{item['desc'][:200]}</i>\n"
+                msg += f"<i>{item['desc'][:200]}</i>\n"
             if item['link']:
-                msg += f"    🔗 <a href='{item['link']}'>Read more</a>\n"
+                msg += f"🔗 <a href='{item['link']}'>Read more</a>\n"
             msg += "\n"
-    msg += "📡 <i>Sources: The Guardian | BBC Tech | TechCrunch</i>"
+    msg += "📡 <i>The Guardian | BBC Tech | TechCrunch</i>"
     send_message(msg)
 
-# ── Briefing dispatcher ───────────────────────────────────────────────────
+# ── Briefing & scheduler ──────────────────────────────────────────────────
 
 def send_briefing():
     log("=== Sending briefing ===")
-
     try:
-        send_football(fetch_football())
-        log("Football sent")
-    except Exception as e:
-        log(f"Football error: {e}")
+        send_football(fetch_football());   log("Football sent")
+    except Exception as e: log(f"Football error: {e}")
     time.sleep(2)
-
     try:
-        send_trending(fetch_trends())
-        log("Trends sent")
-    except Exception as e:
-        log(f"Trends error: {e}")
+        send_trending(fetch_trends());     log("Trends sent")
+    except Exception as e: log(f"Trends error: {e}")
     time.sleep(2)
-
     try:
-        send_geopolitics(fetch_geo())
-        log("Geo sent")
-    except Exception as e:
-        log(f"Geo error: {e}")
+        send_geopolitics(fetch_geo());     log("Geo sent")
+    except Exception as e: log(f"Geo error: {e}")
     time.sleep(2)
-
     try:
-        send_ai_news(fetch_ai())
-        log("AI sent")
-    except Exception as e:
-        log(f"AI error: {e}")
-
+        send_ai_news(fetch_ai());          log("AI sent")
+    except Exception as e: log(f"AI error: {e}")
     log("=== Briefing complete ===")
-
-# ── Scheduler ─────────────────────────────────────────────────────────────
 
 def should_send(last_sent):
     now = nepal_now()
-    if last_sent is None:
-        return True
-    if now.hour == 6 and now.minute < 2 and last_sent.date() < now.date():
-        return True
-    if (now - last_sent).total_seconds() >= 6 * 3600:
-        return True
+    if last_sent is None: return True
+    if now.hour == 6 and now.minute < 2 and last_sent.date() < now.date(): return True
+    if (now - last_sent).total_seconds() >= 6 * 3600: return True
     return False
 
 def run_agent():
     if not TOKEN or not CHAT_ID:
-        log("ERROR: Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID")
-        return
+        log("ERROR: Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID"); return
     log("World Briefing Bot started!")
     send_briefing()
     last_sent = nepal_now()
