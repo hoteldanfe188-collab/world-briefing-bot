@@ -3,7 +3,7 @@
 Football Bot - 2 messages
 Message 1: Recent Results
 Message 2: Live + Upcoming
-Source: api-football.com (api-sports)
+Source: football-data.org
 """
 
 import requests
@@ -11,9 +11,9 @@ import time
 import os
 from datetime import datetime, timezone, timedelta
 
-TOKEN        = os.environ.get("TELEGRAM_TOKEN", "")
-CHAT_ID      = os.environ.get("TELEGRAM_CHAT_ID", "")
-APISPORTS_KEY = os.environ.get("APISPORTS_KEY", "")
+TOKEN    = os.environ.get("TELEGRAM_TOKEN", "")
+CHAT_ID  = os.environ.get("TELEGRAM_CHAT_ID", "")
+FD_KEY   = os.environ.get("FD_KEY", "")
 
 NEPAL_TZ = timezone(timedelta(hours=5, minutes=45))
 
@@ -21,10 +21,11 @@ def nepal_now(): return datetime.now(NEPAL_TZ)
 def now_str():   return nepal_now().strftime("%d %b %Y, %I:%M %p NST")
 def log(msg):    print(f"[{nepal_now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-LEAGUES = [
-    {"id": 39,  "name": "Premier League",   "flag": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "season": 2024},
-    {"id": 2,   "name": "Champions League", "flag": "🇪🇺",         "season": 2025},
-    {"id": 140, "name": "La Liga",          "flag": "🇪🇸",         "season": 2024},
+# football-data.org competition codes
+COMPETITIONS = [
+    {"code": "PL",  "name": "Premier League",   "flag": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"},
+    {"code": "CL",  "name": "Champions League", "flag": "🇪🇺"},
+    {"code": "PD",  "name": "La Liga",          "flag": "🇪🇸"},
 ]
 
 def send_message(text):
@@ -41,90 +42,90 @@ def send_message(text):
     except Exception as e:
         log(f"TG error: {e}")
 
-def fetch_fixtures(league_id, season, date):
-    headers = {
-        "x-apisports-key": APISPORTS_KEY,
-    }
-    params = {
-        "league": league_id,
-        "season": season,
-        "date":   date,
-    }
+def fetch_matches(code, date_from, date_to):
+    headers = {"X-Auth-Token": FD_KEY}
+    params  = {"dateFrom": date_from, "dateTo": date_to, "status": "FINISHED,IN_PLAY,PAUSED,TIMED,SCHEDULED"}
     try:
         r = requests.get(
-            "https://v3.football.api-sports.io/fixtures",
+            f"https://api.football-data.org/v4/competitions/{code}/matches",
             headers=headers, params=params, timeout=12
         )
         r.raise_for_status()
-        data = r.json()
-        fixtures = data.get("response", [])
-        errors = data.get("errors", [])
-        if errors:
-            log(f"  API errors: {errors}")
-        log(f"  OK league={league_id} season={season} date={date} -> {len(fixtures)} fixtures")
-        return fixtures
+        data    = r.json()
+        matches = data.get("matches", [])
+        log(f"  OK {code} {date_from}→{date_to} -> {len(matches)} matches")
+        return matches
     except Exception as e:
-        log(f"  FAIL league={league_id} date={date} -> {e}")
+        log(f"  FAIL {code} -> {e}")
         return []
 
 def team_name(name):
     short = {
-        "Manchester United": "Man Utd",
-        "Manchester City":   "Man City",
-        "Tottenham Hotspur": "Spurs",
-        "Newcastle United":  "Newcastle",
-        "Nottingham Forest": "Nott'm Forest",
-        "Athletic Club":     "Ath. Bilbao",
-        "Real Sociedad":     "R. Sociedad",
-        "Atletico Madrid":   "Atlético",
-        "Inter Milan":       "Inter",
-        "AC Milan":          "Milan",
+        "Manchester United FC": "Man Utd",
+        "Manchester City FC":   "Man City",
+        "Tottenham Hotspur FC": "Spurs",
+        "Newcastle United FC":  "Newcastle",
+        "Nottingham Forest FC": "Nott'm Forest",
+        "Athletic Club":        "Ath. Bilbao",
+        "Real Sociedad de Fútbol": "R. Sociedad",
+        "Club Atlético de Madrid": "Atlético",
+        "FC Internazionale Milano": "Inter",
+        "AC Milan":             "Milan",
+        "Liverpool FC":         "Liverpool",
+        "Arsenal FC":           "Arsenal",
+        "Chelsea FC":           "Chelsea",
+        "FC Barcelona":         "Barcelona",
+        "Real Madrid CF":       "Real Madrid",
+        "Galatasaray AŞ":       "Galatasaray",
     }
-    return short.get(name, name[:20])
+    return short.get(name, name.replace(" FC", "").replace(" CF", "")[:20])
 
-def nepal_time(iso_date):
+def nepal_time(utc_str):
     try:
-        dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
         return dt.astimezone(NEPAL_TZ).strftime("%I:%M %p")
     except:
         return ""
 
-def classify(fix):
-    status = fix["fixture"]["status"]["short"]
-    if status in ["FT", "AET", "PEN", "AWD", "WO"]:
+def classify(match):
+    status = match.get("status", "")
+    if status == "FINISHED":
         return "finished"
-    elif status in ["1H", "2H", "HT", "ET", "BT", "P", "SUSP", "INT", "LIVE"]:
+    elif status in ["IN_PLAY", "PAUSED", "HALFTIME"]:
         return "live"
     else:
         return "upcoming"
 
-def fmt_finished(fix):
-    home = team_name(fix["teams"]["home"]["name"])
-    away = team_name(fix["teams"]["away"]["name"])
-    gh   = fix["goals"]["home"]
-    ga   = fix["goals"]["away"]
-    s    = fix["fixture"]["status"]["short"]
-    tag  = " (AET)" if s == "AET" else " (PEN)" if s == "PEN" else ""
-    # Bold winner
-    if gh > ga:
-        return f"  ✅ <b>{home} {gh}</b> — {ga} {away}{tag}"
-    elif ga > gh:
-        return f"  ✅ {home} {gh} — <b>{ga} {away}</b>{tag}"
-    else:
-        return f"  🤝 {home} {gh} — {ga} {away}{tag}"
+def fmt_finished(match):
+    home  = team_name(match["homeTeam"]["name"])
+    away  = team_name(match["awayTeam"]["name"])
+    score = match.get("score", {})
+    ft    = score.get("fullTime", {})
+    gh    = ft.get("home", "?")
+    ga    = ft.get("away", "?")
+    if gh != "?" and ga != "?":
+        if gh > ga:
+            return f"  ✅ <b>{home} {gh}</b> — {ga} {away}"
+        elif ga > gh:
+            return f"  ✅ {home} {gh} — <b>{ga} {away}</b>"
+        else:
+            return f"  🤝 {home} {gh} — {ga} {away}"
+    return f"  ✅ {home} vs {away}"
 
-def fmt_live(fix):
-    home    = team_name(fix["teams"]["home"]["name"])
-    away    = team_name(fix["teams"]["away"]["name"])
-    gh      = fix["goals"]["home"]
-    ga      = fix["goals"]["away"]
-    elapsed = fix["fixture"]["status"].get("elapsed", "")
-    return f"  🔴 {elapsed}' | <b>{home} {gh} — {ga} {away}</b>"
+def fmt_live(match):
+    home  = team_name(match["homeTeam"]["name"])
+    away  = team_name(match["awayTeam"]["name"])
+    score = match.get("score", {})
+    curr  = score.get("fullTime", score.get("halfTime", {}))
+    gh    = curr.get("home", "?")
+    ga    = curr.get("away", "?")
+    minute = match.get("minute", "")
+    return f"  🔴 {minute}' | <b>{home} {gh} — {ga} {away}</b>"
 
-def fmt_upcoming(fix):
-    home = team_name(fix["teams"]["home"]["name"])
-    away = team_name(fix["teams"]["away"]["name"])
-    kt   = nepal_time(fix["fixture"].get("date", ""))
+def fmt_upcoming(match):
+    home = team_name(match["homeTeam"]["name"])
+    away = team_name(match["awayTeam"]["name"])
+    kt   = nepal_time(match.get("utcDate", ""))
     return f"  🕐 {kt} NST | {home} vs {away}"
 
 def send_recent_results():
@@ -137,17 +138,14 @@ def send_recent_results():
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
     any_result = False
-    for league in LEAGUES:
-        results = []
-        for date in [yesterday, tod_str]:
-            for fix in fetch_fixtures(league["id"], league["season"], date):
-                if classify(fix) == "finished":
-                    results.append(fix)
+    for comp in COMPETITIONS:
+        matches = fetch_matches(comp["code"], yesterday, tod_str)
+        results = [m for m in matches if classify(m) == "finished"]
         if results:
             any_result = True
-            msg += f"{league['flag']} <b>{league['name']}</b>\n"
-            for fix in results:
-                msg += fmt_finished(fix) + "\n"
+            msg += f"{comp['flag']} <b>{comp['name']}</b>\n"
+            for m in results:
+                msg += fmt_finished(m) + "\n"
             msg += "\n"
 
     if not any_result:
@@ -167,36 +165,28 @@ def send_live_and_upcoming():
     live_block     = ""
     upcoming_block = ""
 
-    for league in LEAGUES:
-        live     = []
-        upcoming = []
-        for date in [today, tomorrow]:
-            for fix in fetch_fixtures(league["id"], league["season"], date):
-                c = classify(fix)
-                if c == "live":     live.append(fix)
-                elif c == "upcoming": upcoming.append(fix)
+    for comp in COMPETITIONS:
+        matches  = fetch_matches(comp["code"], today, tomorrow)
+        live     = [m for m in matches if classify(m) == "live"]
+        upcoming = [m for m in matches if classify(m) == "upcoming"]
 
         if live:
-            live_block += f"{league['flag']} <b>{league['name']}</b>\n"
-            for fix in live:
-                live_block += fmt_live(fix) + "\n"
+            live_block += f"{comp['flag']} <b>{comp['name']}</b>\n"
+            for m in live:
+                live_block += fmt_live(m) + "\n"
             live_block += "\n"
 
         if upcoming:
-            upcoming_block += f"{league['flag']} <b>{league['name']}</b>\n"
-            for fix in upcoming[:5]:
-                upcoming_block += fmt_upcoming(fix) + "\n"
+            upcoming_block += f"{comp['flag']} <b>{comp['name']}</b>\n"
+            for m in upcoming[:6]:
+                upcoming_block += fmt_upcoming(m) + "\n"
             upcoming_block += "\n"
 
-    if live_block:
-        msg += "🔴 <b>LIVE NOW</b>\n\n" + live_block
-    else:
-        msg += "🔴 <b>LIVE NOW</b>\nNo matches live right now.\n\n"
+    msg += "🔴 <b>LIVE NOW</b>\n"
+    msg += (live_block if live_block else "No matches live right now.\n") + "\n"
 
-    if upcoming_block:
-        msg += "📅 <b>UPCOMING</b>\n\n" + upcoming_block
-    else:
-        msg += "📅 <b>UPCOMING</b>\nNo matches today or tomorrow.\n"
+    msg += "📅 <b>UPCOMING</b>\n"
+    msg += (upcoming_block if upcoming_block else "No matches today or tomorrow.\n")
 
     msg += "\n📡 <i>Premier League | Champions League | La Liga</i>"
     send_message(msg)
@@ -204,14 +194,12 @@ def send_live_and_upcoming():
 def send_briefing():
     log("=== Football briefing ===")
     try:
-        send_recent_results()
-        log("Results sent")
+        send_recent_results(); log("Results sent")
     except Exception as e:
         log(f"Results error: {e}")
     time.sleep(2)
     try:
-        send_live_and_upcoming()
-        log("Live/upcoming sent")
+        send_live_and_upcoming(); log("Live/upcoming sent")
     except Exception as e:
         log(f"Live error: {e}")
     log("=== Done ===")
@@ -224,8 +212,9 @@ def should_send(last_sent):
     return False
 
 def run_agent():
-    if not TOKEN or not CHAT_ID or not APISPORTS_KEY:
-        log("ERROR: Missing env vars"); return
+    if not TOKEN or not CHAT_ID or not FD_KEY:
+        log("ERROR: Missing env vars (TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, FD_KEY)")
+        return
     log("Football Bot started!")
     send_briefing()
     last_sent = nepal_now()
