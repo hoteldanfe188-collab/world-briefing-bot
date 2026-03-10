@@ -23,7 +23,7 @@ def log(msg):    print(f"[{nepal_now().strftime('%H:%M:%S')}] {msg}", flush=True
 
 LEAGUES = [
     {"id": 39,  "name": "Premier League",   "flag": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "season": 2024},
-    {"id": 2,   "name": "Champions League", "flag": "🇪🇺",         "season": 2024},
+    {"id": 2,   "name": "Champions League", "flag": "🇪🇺",         "season": 2025},
     {"id": 140, "name": "La Liga",          "flag": "🇪🇸",         "season": 2024},
 ]
 
@@ -58,7 +58,10 @@ def fetch_fixtures(league_id, season, date):
         r.raise_for_status()
         data = r.json()
         fixtures = data.get("response", [])
-        log(f"  OK league={league_id} date={date} -> {len(fixtures)} fixtures")
+        errors = data.get("errors", [])
+        if errors:
+            log(f"  API errors: {errors}")
+        log(f"  OK league={league_id} season={season} date={date} -> {len(fixtures)} fixtures")
         return fixtures
     except Exception as e:
         log(f"  FAIL league={league_id} date={date} -> {e}")
